@@ -520,7 +520,7 @@ static void ixxat_usb_free_usb_communication(struct ixxat_usb_device *dev)
 	struct net_device *netdev = dev->netdev;
 	u32 SkbIdx;
 	u32 UrbIdx;
-
+	u32 frameLen;
 	ix_trace_printk (">> ixxat_usb_free_usb_communication\n");
 
 	netif_stop_queue(netdev);
@@ -532,7 +532,7 @@ static void ixxat_usb_free_usb_communication(struct ixxat_usb_device *dev)
 	ixxat_usb_msg_free_idx(dev, 0xFFFFFFFF);
 
 	for (SkbIdx = 0; SkbIdx < dev->can.echo_skb_max; SkbIdx++)
-		can_free_echo_skb(netdev, SkbIdx);
+		can_free_echo_skb(netdev, SkbIdx, &frameLen);
 
 	for (UrbIdx = 0; UrbIdx < IXXAT_USB_MAX_TX_URBS; UrbIdx++) {
 		if (dev->tx_contexts[UrbIdx].urb_index != IXXAT_USB_FREE_ENTRY)
@@ -632,6 +632,7 @@ static int ixxat_usb_handle_canmsg(struct ixxat_usb_device *dev,
 				   struct ixxat_can_msg *rx)
 {
 	int err = 0;
+	unsigned int frameLen;
 	const u32 ixx_flags = le32_to_cpu(rx->base.flags);
 	const u8 dlc = IXXAT_USB_DECODE_DLC(ixx_flags);
 	struct canfd_frame *cf;
@@ -680,7 +681,7 @@ static int ixxat_usb_handle_canmsg(struct ixxat_usb_device *dev,
 				if (MsgIdx >= IXXAT_USB_MSG_IDX_OFFSET) {
 						MsgIdx -= IXXAT_USB_MSG_IDX_OFFSET;
 
-						can_get_echo_skb(netdev, MsgIdx);
+						can_get_echo_skb(netdev, MsgIdx, &frameLen);
 						ixxat_usb_msg_free_idx(dev, MsgIdx);
 				}
 			}
@@ -1145,6 +1146,7 @@ static void ixxat_usb_write_bulk_callback(struct urb *urb)
 	struct ixxat_usb_device *dev;
 	struct net_device *netdev;
 	u32 MsgIdx;
+	u32 frameLen;
 	int iSkbRet;
 	int	err;	
 	
@@ -1170,7 +1172,7 @@ static void ixxat_usb_write_bulk_callback(struct urb *urb)
 	MsgIdx = context->msg_index;
 
 	if (MsgIdx < IXXAT_USB_MAX_MSGS) {
-		iSkbRet = can_get_echo_skb(netdev, MsgIdx);
+		iSkbRet = can_get_echo_skb(netdev, MsgIdx, &frameLen);
 
 		if (iSkbRet) {
 			netdev->stats.tx_bytes += iSkbRet;
@@ -1235,6 +1237,7 @@ static netdev_tx_t ixxat_usb_start_xmit(struct sk_buff *skb,
 {
 	int err = 0;
 	int size;
+	unsigned int frameLen;
 	struct ixxat_usb_device *dev = netdev_priv(netdev);
 	struct ixxat_tx_urb_context *context = NULL;
 	struct net_device_stats *stats = &netdev->stats;
@@ -1285,13 +1288,13 @@ static netdev_tx_t ixxat_usb_start_xmit(struct sk_buff *skb,
 				selfReception = true; // set self reception
 
 				if ((loopMode & IX_LOOPBACK) == IX_LOOPBACK) {
-					can_put_echo_skb(skb, netdev, MsgIdx);
+					can_put_echo_skb(skb, netdev, MsgIdx, &frameLen);
 					echoSkb = true;
 				}
 			} else {
 				// handle the reception in the USB callback
 				if ((loopMode & IX_LOOPBACK) == IX_LOOPBACK) {
-					can_put_echo_skb(skb, netdev, MsgIdx);
+					can_put_echo_skb(skb, netdev, MsgIdx, &frameLen);
 					echoSkb = true;
 				}
 				else {
@@ -1323,7 +1326,7 @@ static netdev_tx_t ixxat_usb_start_xmit(struct sk_buff *skb,
 			if (err) { // submit failed
 
 				// should only free if it's exist
-				can_free_echo_skb(netdev, MsgIdx);
+				can_free_echo_skb(netdev, MsgIdx, &frameLen);
 				ixxat_usb_msg_free_idx(dev, MsgIdx);
 				ixxat_usb_rel_tx_context(dev, context);
 
